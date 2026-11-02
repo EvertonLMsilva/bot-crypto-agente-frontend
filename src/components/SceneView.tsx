@@ -22,7 +22,7 @@ export function SceneView({ loadScene = defaultLoader }: { loadScene?: SceneLoad
   }, [loadScene]);
 
   return <section className="scene-panel" aria-label="Visualização 3D">
-    <div className="scene-meta"><span>ESCRITÓRIO VIRTUAL</span><span>02 / SALAS E MESAS</span></div>
+    <div className="scene-meta"><span>ESCRITÓRIO VIRTUAL</span><span>03 / PERSONAGENS</span></div>
     <div className="scene-host" ref={host} />
     {state === 'failed' ? <div className="scene-message error" role="alert">
       <strong>Não foi possível exibir a cena 3D.</strong>
@@ -30,6 +30,6 @@ export function SceneView({ loadScene = defaultLoader }: { loadScene?: SceneLoad
     </div> : <p className={`scene-status ${state}`} role="status">
       <span className="dot" />{state === 'loading' ? 'Preparando a cena 3D…' : 'Cena 3D pronta'}
     </p>}
-    <div className="scene-caption"><span>Análise central · BTC · ETH · coordenação · orçamento</span><span>Um pavimento / postos reservados</span></div>
+    <div className="scene-caption"><span>Cinco personagens fictícios · em espera</span><span>Um pavimento / postos reservados</span></div>
   </section>;
 }

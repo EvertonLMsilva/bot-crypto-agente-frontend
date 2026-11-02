@@ -4,6 +4,8 @@ import {
 import type { OfficeLayout } from '../contracts/office';
 import { createOfficeLayout } from '../fixtures/office';
 import { createOffice, disposeOffice } from './createOffice';
+import { createCharacterFixture } from '../fixtures/characters';
+import { createCharacters } from './createCharacters';
 
 type Renderer = Pick<WebGLRenderer, 'domElement' | 'setSize' | 'setPixelRatio' | 'render' | 'dispose' | 'forceContextLoss'>;
 export interface SceneOptions {
@@ -82,14 +84,19 @@ export function mountScene(host: HTMLElement, options: SceneOptions): SceneHandl
   try {
     renderer = options.createRenderer?.() ?? new WebGLRenderer({ antialias: true, powerPreference: 'low-power' });
     renderer.domElement.setAttribute('role', 'img');
-    renderer.domElement.setAttribute('aria-label', 'Escritório 3D de um pavimento: análise central, BTC, ETH, coordenação e orçamento');
+    renderer.domElement.setAttribute('aria-label', 'Escritório 3D de um pavimento: análise central, BTC, ETH, coordenação e orçamento, com cinco personagens fictícios em espera');
     layout = options.officeLayout ?? createOfficeLayout();
     scene.background = new Color('#101b27');
     scene.add(new AmbientLight('#d8e8ff', 1.7));
     const light = new DirectionalLight('#ffffff', 3);
     light.position.set(4, 8, 5); scene.add(light);
 
-    scene.add(createOffice(layout));
+    const office = createOffice(layout);
+    // Placas acima do lado de acesso das mesas para não encobrirem os ocupantes.
+    for (const station of layout.stations) office.getObjectByName(station.id)!
+      .getObjectByName('station-label')!.position.set(0, 3.2, 1);
+    scene.add(office);
+    scene.add(createCharacters(createCharacterFixture(layout), layout));
 
     renderer.domElement.addEventListener('webglcontextlost', contextLost);
     host.append(renderer.domElement);

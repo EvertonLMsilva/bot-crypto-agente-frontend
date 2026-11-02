@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import type { WebGLRenderer } from 'three';
-import { BoxGeometry, Mesh, MeshStandardMaterial, PerspectiveCamera, Scene, Sprite, Texture, Vector3 } from 'three';
+import { Box3, BoxGeometry, Mesh, MeshStandardMaterial, PerspectiveCamera, Scene, Sprite, Texture, Vector3 } from 'three';
 import { stationIds } from '../../src/contracts/office';
 import { createOfficeLayout } from '../../src/fixtures/office';
 import { mountScene } from '../../src/scene/mountScene';
@@ -38,6 +38,8 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
     flush(); expect(ready).toHaveBeenCalledOnce();
     const [scene, camera] = renderer.render.mock.calls[0] as [Scene, PerspectiveCamera];
     for (const id of stationIds) expect(scene.getObjectByName(id)).toBeDefined();
+    expect(scene.getObjectByName('characters')!.children).toHaveLength(5);
+    for (const id of stationIds) expect(scene.getObjectByName(`character:${id}`)).toBeDefined();
     expect(scene.getObjectByName('floor')).toBeDefined();
     expect(camera.aspect).toBe(2); expect(scene.children.some(node => node.type.includes('Light'))).toBe(true);
     handle.dispose();
@@ -110,6 +112,34 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
     const scene = renderer.render.mock.calls[0][0] as Scene;
     expect(scene.getObjectByName('btc-specialist')!.position.x).toBe(officeLayout.stations[1].position.x);
     handle.dispose();
+  });
+  it('mantém as placas visíveis sem encobrir os cinco personagens no desktop/mobile', () => {
+    const handle = mountScene(host, { onReady: vi.fn(), onError: vi.fn(), createRenderer: () => renderer });
+    try {
+      for (const size of [[800, 400], [345, 350]]) {
+        [width, height] = size; resize([], {} as ResizeObserver); flush();
+        const [scene, camera] = renderer.render.mock.lastCall! as [Scene, PerspectiveCamera];
+        scene.updateMatrixWorld(true); camera.updateMatrixWorld(true);
+        for (const id of stationIds) {
+          const body = new Box3().setFromObject(scene.getObjectByName(`character:${id}`)!);
+          const points = [];
+          for (const x of [body.min.x, body.max.x]) for (const y of [body.min.y, body.max.y])
+            for (const z of [body.min.z, body.max.z]) points.push(new Vector3(x, y, z).project(camera));
+          const label = scene.getObjectByName(id)!.getObjectByName('station-label')!;
+          const center = label.getWorldPosition(new Vector3());
+          const depth = -center.clone().applyMatrix4(camera.matrixWorldInverse).z;
+          const scale = label.getWorldScale(new Vector3());
+          center.project(camera);
+          const halfHeight = scale.y / (2 * depth * Math.tan(camera.fov * Math.PI / 360));
+          const halfWidth = scale.x / (2 * depth * Math.tan(camera.fov * Math.PI / 360) * camera.aspect);
+          expect(Math.abs(center.y) + halfHeight).toBeLessThan(0.95);
+          const clear = Math.max(...points.map(p => p.y)) < center.y - halfHeight ||
+            Math.max(...points.map(p => p.x)) < center.x - halfWidth ||
+            Math.min(...points.map(p => p.x)) > center.x + halfWidth;
+          expect(clear, id).toBe(true);
+        }
+      }
+    } finally { handle.dispose(); }
   });
   it('trata erro ao renderizar e libera os recursos', () => {
     renderer.render.mockImplementation(() => { throw new Error('GPU'); }); const onError = vi.fn(); const ready = vi.fn();

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import type { WebGLRenderer } from 'three';
-import { Mesh, PerspectiveCamera, Scene } from 'three';
+import { BoxGeometry, Mesh, MeshStandardMaterial, PerspectiveCamera, Scene, Sprite, Texture, Vector3 } from 'three';
+import { stationIds } from '../../src/contracts/office';
+import { createOfficeLayout } from '../../src/fixtures/office';
 import { mountScene } from '../../src/scene/mountScene';
 
 describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => {
@@ -25,14 +27,18 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
     vi.stubGlobal('ResizeObserver', class { constructor(cb: ResizeObserverCallback) { resize = cb; } observe() {} disconnect = disconnect; });
     renderer = { domElement: document.createElement('canvas'), setSize: vi.fn(), setPixelRatio: vi.fn(),
       render: vi.fn(), dispose: vi.fn(), forceContextLoss: vi.fn() };
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      fillRect: vi.fn(), fillText: vi.fn(), measureText: () => ({ width: 100 }),
+    } as unknown as CanvasRenderingContext2D);
   });
   afterEach(() => { document.body.replaceChildren(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
-  it('monta câmera, luz, piso e três referências e sinaliza pronto após renderizar', () => {
+  it('monta escritório, cinco postos, câmera e luz; sinaliza pronto após renderizar', () => {
     const ready = vi.fn(); const handle = mountScene(host, { onReady: ready, onError: vi.fn(), createRenderer: () => renderer });
     expect(host.querySelector('canvas')).not.toBeNull(); expect(ready).not.toHaveBeenCalled();
     flush(); expect(ready).toHaveBeenCalledOnce();
     const [scene, camera] = renderer.render.mock.calls[0] as [Scene, PerspectiveCamera];
-    expect(scene.children.filter(node => node instanceof Mesh)).toHaveLength(4);
+    for (const id of stationIds) expect(scene.getObjectByName(id)).toBeDefined();
+    expect(scene.getObjectByName('floor')).toBeDefined();
     expect(camera.aspect).toBe(2); expect(scene.children.some(node => node.type.includes('Light'))).toBe(true);
     handle.dispose();
   });
@@ -44,12 +50,37 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
     width = 0; resize([], {} as ResizeObserver); flush();
     expect(camera.aspect).toBe(0.5); handle.dispose();
   });
+  it('enquadra o pavimento inteiro e aproveita a viewport desktop e móvel', () => {
+    const layout = createOfficeLayout();
+    const handle = mountScene(host, { onReady: vi.fn(), onError: vi.fn(), createRenderer: () => renderer });
+    try { for (const size of [[800, 400], [345, 350]]) {
+      [width, height] = size; resize([], {} as ResizeObserver); flush();
+      const camera = renderer.render.mock.lastCall![1] as PerspectiveCamera;
+      camera.updateMatrixWorld();
+      const points = [];
+      for (const x of [layout.floor.x, layout.floor.x + layout.floor.width])
+        for (const z of [layout.floor.z, layout.floor.z + layout.floor.depth])
+          for (const y of [0, 2.6]) points.push(new Vector3(x, y, z).project(camera));
+      for (const point of points) { expect(Math.abs(point.x)).toBeLessThan(0.93); expect(Math.abs(point.y)).toBeLessThan(0.73); }
+      const horizontal = Math.max(...points.map(point => point.x)) - Math.min(...points.map(point => point.x));
+      const vertical = Math.max(...points.map(point => point.y)) - Math.min(...points.map(point => point.y));
+      expect(Math.max(horizontal, vertical)).toBeGreaterThan(1.2);
+    } } finally { handle.dispose(); }
+  });
   it('libera cada geometria, material, contexto, listener, observer e frame uma vez', () => {
     const handle = mountScene(host, { onReady: vi.fn(), onError: vi.fn(), createRenderer: () => renderer }); flush();
     const scene = renderer.render.mock.calls[0][0] as Scene;
     const spies: ReturnType<typeof vi.spyOn>[] = [];
-    scene.traverse(node => { if (node instanceof Mesh) { spies.push(vi.spyOn(node.geometry, 'dispose'));
-      for (const material of [node.material].flat()) spies.push(vi.spyOn(material, 'dispose')); } });
+    const resources = new Set<{ dispose: () => void }>();
+    scene.traverse(node => {
+      if (node instanceof Mesh) resources.add(node.geometry);
+      if (node instanceof Mesh || node instanceof Sprite) for (const material of [node.material].flat()) {
+        resources.add(material);
+        for (const value of Object.values(material)) if (value instanceof Texture) resources.add(value);
+      }
+    });
+    expect([...resources].some(resource => resource instanceof Texture)).toBe(true);
+    for (const resource of resources) spies.push(vi.spyOn(resource, 'dispose'));
     resize([], {} as ResizeObserver); handle.dispose(); handle.dispose(); flush();
     for (const spy of spies) expect(spy).toHaveBeenCalledOnce();
     expect(disconnect).toHaveBeenCalledOnce(); expect(renderer.dispose).toHaveBeenCalledOnce();
@@ -60,6 +91,25 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
     const onError = vi.fn();
     const handle = mountScene(host, { onReady: vi.fn(), onError, createRenderer: () => { throw new Error('WebGL'); } });
     expect(onError).toHaveBeenCalledOnce(); expect(host.children).toHaveLength(0); handle.dispose();
+  });
+  it('libera móveis parcialmente criados e renderer se as placas não inicializarem', () => {
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(null);
+    const geometry = vi.spyOn(BoxGeometry.prototype, 'dispose');
+    const material = vi.spyOn(MeshStandardMaterial.prototype, 'dispose');
+    const onError = vi.fn(); const onReady = vi.fn();
+    mountScene(host, { onReady, onError, createRenderer: () => renderer });
+    expect(onError).toHaveBeenCalledOnce(); expect(onReady).not.toHaveBeenCalled();
+    expect(geometry).toHaveBeenCalled(); expect(material).toHaveBeenCalled();
+    expect(renderer.dispose).toHaveBeenCalledOnce(); expect(host.children).toHaveLength(0);
+    expect(frames.size).toBe(0);
+  });
+  it('aceita um layout configurado mantendo as referências e o resize', () => {
+    const officeLayout = createOfficeLayout({ scale: 1.25 });
+    const handle = mountScene(host, { officeLayout, onReady: vi.fn(), onError: vi.fn(), createRenderer: () => renderer });
+    flush();
+    const scene = renderer.render.mock.calls[0][0] as Scene;
+    expect(scene.getObjectByName('btc-specialist')!.position.x).toBe(officeLayout.stations[1].position.x);
+    handle.dispose();
   });
   it('trata erro ao renderizar e libera os recursos', () => {
     renderer.render.mockImplementation(() => { throw new Error('GPU'); }); const onError = vi.fn(); const ready = vi.fn();

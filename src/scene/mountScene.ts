@@ -1,10 +1,13 @@
 import {
-  AmbientLight, BoxGeometry, Color, CylinderGeometry, DirectionalLight, Mesh,
-  MeshStandardMaterial, PerspectiveCamera, PlaneGeometry, Scene, SphereGeometry, WebGLRenderer,
+  AmbientLight, Color, DirectionalLight, PerspectiveCamera, Scene, Vector3, WebGLRenderer,
 } from 'three';
+import type { OfficeLayout } from '../contracts/office';
+import { createOfficeLayout } from '../fixtures/office';
+import { createOffice, disposeOffice } from './createOffice';
 
 type Renderer = Pick<WebGLRenderer, 'domElement' | 'setSize' | 'setPixelRatio' | 'render' | 'dispose' | 'forceContextLoss'>;
 export interface SceneOptions {
+  officeLayout?: OfficeLayout;
   onReady: () => void;
   onError: () => void;
   /** Ponto de injeção para testar ciclo de vida sem confundir mocks com WebGL real. */
@@ -20,6 +23,7 @@ export function mountScene(host: HTMLElement, options: SceneOptions): SceneHandl
   let frame: number | undefined;
   let disposed = false;
   let ready = false;
+  let layout: OfficeLayout;
 
   function dispose() {
     if (disposed) return;
@@ -28,12 +32,7 @@ export function mountScene(host: HTMLElement, options: SceneOptions): SceneHandl
     observer?.disconnect();
     window.removeEventListener('resize', schedule);
     renderer?.domElement.removeEventListener('webglcontextlost', contextLost);
-    scene.traverse(node => {
-      if (node instanceof Mesh) {
-        node.geometry.dispose();
-        for (const material of [node.material].flat()) material.dispose();
-      }
-    });
+    disposeOffice(scene);
     scene.clear();
     renderer?.dispose();
     renderer?.forceContextLoss();
@@ -52,6 +51,25 @@ export function mountScene(host: HTMLElement, options: SceneOptions): SceneHandl
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
+      // Ajuste automático simples, sem controles: encaixa piso e placas com margem.
+      const radius = Math.hypot(layout.floor.width, layout.floor.depth) / 2 + 3;
+      const vertical = camera.fov * Math.PI / 360;
+      const horizontal = Math.atan(Math.tan(vertical) * camera.aspect);
+      const target = new Vector3(layout.floor.x + layout.floor.width / 2, 0.6, layout.floor.z + layout.floor.depth / 2);
+      const direction = new Vector3(0.5, 1, 0.85).normalize();
+      const right = new Vector3(direction.z, 0, -direction.x).normalize();
+      const up = new Vector3().crossVectors(direction, right);
+      let distance = 1;
+      for (const x of [layout.floor.x, layout.floor.x + layout.floor.width])
+        for (const z of [layout.floor.z, layout.floor.z + layout.floor.depth])
+          for (const y of [0, 2.6]) {
+            const delta = new Vector3(x, y, z).sub(target);
+            distance = Math.max(distance, delta.dot(direction) + Math.abs(delta.dot(right)) / (Math.tan(horizontal) * 0.9),
+              delta.dot(direction) + Math.abs(delta.dot(up)) / (Math.tan(vertical) * 0.7));
+          }
+      camera.position.copy(target).add(direction.multiplyScalar(distance));
+      camera.far = distance + radius * 3;
+      camera.lookAt(target);
       camera.updateProjectionMatrix();
       renderer.render(scene, camera);
       if (!ready) { ready = true; options.onReady(); }
@@ -64,22 +82,14 @@ export function mountScene(host: HTMLElement, options: SceneOptions): SceneHandl
   try {
     renderer = options.createRenderer?.() ?? new WebGLRenderer({ antialias: true, powerPreference: 'low-power' });
     renderer.domElement.setAttribute('role', 'img');
-    renderer.domElement.setAttribute('aria-label', 'Cena 3D com piso, cubo, esfera e cilindro de referência');
+    renderer.domElement.setAttribute('aria-label', 'Escritório 3D de um pavimento: análise central, BTC, ETH, coordenação e orçamento');
+    layout = options.officeLayout ?? createOfficeLayout();
     scene.background = new Color('#101b27');
-    camera.position.set(9, 10, 13);
-    camera.lookAt(0, 0, 0);
     scene.add(new AmbientLight('#d8e8ff', 1.7));
     const light = new DirectionalLight('#ffffff', 3);
     light.position.set(4, 8, 5); scene.add(light);
 
-    const floor = new Mesh(new PlaneGeometry(12, 10), new MeshStandardMaterial({ color: '#283e50', roughness: 0.9 }));
-    floor.rotation.x = -Math.PI / 2; scene.add(floor);
-    const cube = new Mesh(new BoxGeometry(1.7, 1.7, 1.7), new MeshStandardMaterial({ color: '#5be0bb', roughness: 0.45 }));
-    cube.position.set(-2.6, 0.85, 0); scene.add(cube);
-    const sphere = new Mesh(new SphereGeometry(0.95, 32, 20), new MeshStandardMaterial({ color: '#77aaff', roughness: 0.4 }));
-    sphere.position.set(0, 0.95, 0); scene.add(sphere);
-    const cylinder = new Mesh(new CylinderGeometry(0.8, 0.8, 2, 32), new MeshStandardMaterial({ color: '#efc67b', roughness: 0.5 }));
-    cylinder.position.set(2.6, 1, 0); scene.add(cylinder);
+    scene.add(createOffice(layout));
 
     renderer.domElement.addEventListener('webglcontextlost', contextLost);
     host.append(renderer.domElement);

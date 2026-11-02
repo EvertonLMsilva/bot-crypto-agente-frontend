@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 
-test('build renderiza WebGL real, pixels, resize e somente recursos locais', async ({ page }, testInfo) => {
+test('escritório 2.2 renderiza WebGL real, cinco postos, resize e somente recursos locais', async ({ page }, testInfo) => {
   const errors: string[] = [];
   const external: string[] = [];
   const failed: string[] = [];
@@ -17,7 +17,9 @@ test('build renderiza WebGL real, pixels, resize e somente recursos locais', asy
   await page.goto('/');
   await expect(page.getByRole('status')).toHaveText('Cena 3D pronta');
   await expect(page.getByText('Simulação fictícia · pausada')).toBeVisible();
-  const canvas = page.getByRole('img', { name: /Cena 3D/ });
+  const canvas = page.getByRole('img', { name: /Escritório 3D/ });
+  await expect(canvas).toHaveAttribute('aria-label', /análise central, BTC, ETH, coordenação e orçamento/);
+  await expect(page.locator('.scene-caption')).toContainText('Um pavimento / postos reservados');
   const webgl = await canvas.evaluate(element => {
     const gl = (element as HTMLCanvasElement).getContext('webgl2');
     if (!gl || gl.isContextLost()) throw new Error('WebGL2 indisponível');
@@ -47,7 +49,7 @@ test('build renderiza WebGL real, pixels, resize e somente recursos locais', asy
   expect(pixels.blue).toBeGreaterThan(100);
   expect(pixels.amber).toBeGreaterThan(100);
   expect(pixels.colors).toBeGreaterThan(20);
-  await page.screenshot({ path: 'evidence/scene-desktop.png', fullPage: true });
+  await page.screenshot({ path: 'test-results/topic-2.2/office-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => canvas.evaluate(element => {
     const canvas = element as HTMLCanvasElement;
@@ -58,10 +60,10 @@ test('build renderiza WebGL real, pixels, resize e somente recursos locais', asy
   const statusBox = await page.getByRole('status').boundingBox();
   const captionBox = await page.locator('.scene-caption').boundingBox();
   expect(statusBox!.y + statusBox!.height).toBeLessThan(captionBox!.y);
-  await page.screenshot({ path: 'evidence/scene-mobile.png', fullPage: true });
+  await page.screenshot({ path: 'test-results/topic-2.2/office-mobile.png', fullPage: true });
   expect(external).toEqual([]); expect(failed).toEqual([]); expect(errors).toEqual([]);
   await testInfo.attach('WebGL real e pixels', { body: JSON.stringify({ webgl, pixels, errors, external, failed }, null, 2), contentType: 'application/json' });
-  await writeFile('evidence/webgl.json', JSON.stringify({ webgl, pixels, errors, external, failed }, null, 2));
+  await writeFile('test-results/topic-2.2/webgl-office.json', JSON.stringify({ webgl, pixels, errors, external, failed }, null, 2));
 });
 
 test('apresenta falha compreensível quando WebGL não está disponível', async ({ page }) => {

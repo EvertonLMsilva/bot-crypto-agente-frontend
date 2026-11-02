@@ -9,6 +9,33 @@ describe('layout espacial do escritório 2.2', () => {
     fillRect: vi.fn(), fillText: vi.fn(), measureText: () => ({ width: 100 }),
   } as unknown as CanvasRenderingContext2D));
   afterEach(() => vi.restoreAllMocks());
+  it.each([0.75, 1, 1.25, 2])('alinha núcleo central e periferia à DEC-003 na escala %s', scale => {
+    const layout = createOfficeLayout({ scale });
+    const byId = (id: string) => layout.stations.find(station => station.id === id)!;
+    expect(byId('central-analyst').position.x).toBeLessThan(0);
+    expect(byId('budget-manager').position.x).toBeGreaterThan(0);
+    expect(Math.abs(byId('budget-manager').position.x)).toBeLessThan(4 * scale);
+    expect(byId('opportunity-coordinator').position.x).toBe(byId('central-analyst').position.x);
+    for (const id of ['btc-specialist', 'eth-specialist']) {
+      expect(Math.abs(byId(id).position.x)).toBeGreaterThan(4 * scale);
+      expect(byId(id).position.z).toBeGreaterThan(4 * scale);
+    }
+    expect(() => assertOfficeLayout(layout)).not.toThrow();
+  });
+  it('possui piso neutro, madeira, vidro, decoração e placas integradas', () => {
+    const office = createOffice(createOfficeLayout());
+    expect(office.getObjectByName('wood-desks')).toBeUndefined();
+    expect(office.getObjectByName('floor')!.userData.surface).toBe('neutral-tile');
+    expect(office.getObjectByName('glass:analysis-east')).toBeDefined();
+    expect(office.getObjectByName('plants')!.children.length).toBeGreaterThanOrEqual(6);
+    for (const id of stationIds) {
+      const station = office.getObjectByName(id)!;
+      expect(station.getObjectByName('desk')!.userData.surface).toBe('wood');
+      expect(station.getObjectByName('keyboard')).toBeDefined();
+      expect(station.getObjectByName('drawer')).toBeDefined();
+      expect(station.getObjectByName('station-label')!.type).toBe('Mesh');
+    }
+  });
   it('inclui análise central, BTC, ETH, coordenação, orçamento e circulação', () => {
     expect(createOfficeLayout().rooms.map(room => room.id).sort()).toEqual(
       ['analysis', 'btc', 'eth', 'coordination', 'budget', 'circulation'].sort());
@@ -45,11 +72,14 @@ describe('layout espacial do escritório 2.2', () => {
   it('conserva portas abertas e circulação conectada para as cinco salas', () => {
     const layout = createOfficeLayout();
     const circulation = layout.rooms.find(room => room.id === 'circulation')!;
-    expect(circulation.areas).toHaveLength(2);
-    expect(intersects(circulation.areas[0], circulation.areas[1])).toBe(true);
+    // A planta aprovada exige uma circulação ao redor do núcleo, em vez da cruz anterior.
+    const reached = new Set([0]);
+    for (let pass = 0; pass < circulation.areas.length; pass++)
+      circulation.areas.forEach((area, index) => { if ([...reached].some(other => intersects(area, circulation.areas[other]))) reached.add(index); });
+    expect(reached.size).toBe(circulation.areas.length);
     for (const room of layout.rooms.filter(room => room.id !== 'circulation')) {
       expect(room.entrance).toBeDefined();
-      expect(room.entrance!.width).toBeGreaterThanOrEqual(1.6);
+      expect(Math.max(room.entrance!.width, room.entrance!.depth)).toBeGreaterThanOrEqual(1.6);
       for (const wall of layout.walls) expect(intersects(room.entrance!, wall.bounds)).toBe(false);
       for (const station of layout.stations) expect(intersects(room.entrance!, stationBounds(station))).toBe(false);
       expect(circulation.areas.some(area => intersects(area, room.entrance!))).toBe(true);

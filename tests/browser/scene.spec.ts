@@ -39,7 +39,8 @@ test('escritório 2.2 renderiza WebGL real, cinco postos, resize e somente recur
     for (let i = 0; i < data.length; i += 4) {
       const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
       colors.add(`${r >> 4},${g >> 4},${b >> 4}`);
-      if (g > r * 1.25 && g > 100 && b > 70) mint++;
+      // Verde da vegetação substitui o piso verde da geometria anterior.
+      if (g > r * 1.1 && g > b * 1.1 && g > 40) mint++;
       if (b > r * 1.25 && b > g * 1.08 && b > 120) blue++;
       if (r > b * 1.25 && g > b * 1.15 && r > 130) amber++;
     }
@@ -49,7 +50,7 @@ test('escritório 2.2 renderiza WebGL real, cinco postos, resize e somente recur
   expect(pixels.blue).toBeGreaterThan(100);
   expect(pixels.amber).toBeGreaterThan(100);
   expect(pixels.colors).toBeGreaterThan(20);
-  await page.screenshot({ path: 'test-results/topic-2.2/office-desktop.png', fullPage: true });
+  await page.screenshot({ path: 'test-results/visual-002/office-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => canvas.evaluate(element => {
     const canvas = element as HTMLCanvasElement;
@@ -60,10 +61,10 @@ test('escritório 2.2 renderiza WebGL real, cinco postos, resize e somente recur
   const statusBox = await page.getByRole('status').boundingBox();
   const captionBox = await page.locator('.scene-caption').boundingBox();
   expect(statusBox!.y + statusBox!.height).toBeLessThan(captionBox!.y);
-  await page.screenshot({ path: 'test-results/topic-2.2/office-mobile.png', fullPage: true });
+  await page.screenshot({ path: 'test-results/visual-002/office-mobile.png', fullPage: true });
   expect(external).toEqual([]); expect(failed).toEqual([]); expect(errors).toEqual([]);
   await testInfo.attach('WebGL real e pixels', { body: JSON.stringify({ webgl, pixels, errors, external, failed }, null, 2), contentType: 'application/json' });
-  await writeFile('test-results/topic-2.2/webgl-office.json', JSON.stringify({ webgl, pixels, errors, external, failed }, null, 2));
+  await writeFile('test-results/visual-002/webgl-office.json', JSON.stringify({ webgl, pixels, errors, external, failed }, null, 2));
 });
 
 test('apresenta falha compreensível quando WebGL não está disponível', async ({ page }) => {

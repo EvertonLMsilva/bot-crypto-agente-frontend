@@ -21,7 +21,9 @@ export function createCharacterFixture(layout: OfficeLayout): readonly Character
       transform: { position: { x: station.position.x + cos * x + sin * z, y: 0,
         z: station.position.z - sin * x + cos * z }, rotationY: station.orientation,
       scale: { x: layout.scale, y: 1, z: layout.scale } },
-      appearance: { color: station.color, skin: identity.skin, hair: identity.hair, accessory: identity.accessory },
+      appearance: { color: ({ 'central-analyst': '#37526b', 'btc-specialist': '#3b4654', 'eth-specialist': '#ddd9ce',
+        'opportunity-coordinator': '#506e67', 'budget-manager': '#595d68' })[station.id],
+        skin: identity.skin, hair: identity.hair, accessory: identity.accessory },
     };
   });
   assertCharacters(characters, layout);

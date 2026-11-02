@@ -40,17 +40,17 @@ test('cinco personagens fictícios: WebGL2 real, desktop/mobile e somente recurs
   }, [...shot]);
   // Pixels e capturas comprovam WebGL real; contagem/mapeamento/modelos são auditados nos testes unitários.
   expect(pixels.colors).toBeGreaterThan(100); expect(pixels.skin).toBeGreaterThan(50);
-  await page.screenshot({ path: 'test-results/topic-2.3/characters-desktop.png', fullPage: true });
+  await page.screenshot({ path: 'test-results/visual-002/characters-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => canvas.evaluate(element => {
     const c = element as HTMLCanvasElement; return Math.abs(c.width / c.height - c.clientWidth / c.clientHeight);
   })).toBeLessThan(0.01);
   await expect(page.getByRole('status')).toHaveText('Cena 3D pronta');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: 'test-results/topic-2.3/characters-mobile.png', fullPage: true });
+  await page.screenshot({ path: 'test-results/visual-002/characters-mobile.png', fullPage: true });
   expect(errors).toEqual([]); expect(external).toEqual([]);
   const evidence = { webgl, pixels, errors, external };
-  await writeFile('test-results/topic-2.3/webgl-characters.json', JSON.stringify(evidence, null, 2));
+  await writeFile('test-results/visual-002/webgl-characters.json', JSON.stringify(evidence, null, 2));
   await testInfo.attach('WebGL2 real', { body: JSON.stringify(evidence), contentType: 'application/json' });
 });
 

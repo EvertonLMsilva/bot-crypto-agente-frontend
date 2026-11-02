@@ -1,5 +1,5 @@
 import {
-  AmbientLight, Color, DirectionalLight, PerspectiveCamera, Scene, Vector3, WebGLRenderer,
+  AmbientLight, Color, DirectionalLight, PCFShadowMap, PerspectiveCamera, Scene, Vector3, WebGLRenderer,
 } from 'three';
 import type { OfficeLayout } from '../contracts/office';
 import { createOfficeLayout } from '../fixtures/office';
@@ -7,7 +7,8 @@ import { createOffice, disposeOffice } from './createOffice';
 import { createCharacterFixture } from '../fixtures/characters';
 import { createCharacters } from './createCharacters';
 
-type Renderer = Pick<WebGLRenderer, 'domElement' | 'setSize' | 'setPixelRatio' | 'render' | 'dispose' | 'forceContextLoss'>;
+type Renderer = Pick<WebGLRenderer, 'domElement' | 'setSize' | 'setPixelRatio' | 'render' | 'dispose' | 'forceContextLoss'> &
+  Partial<Pick<WebGLRenderer, 'shadowMap'>>;
 export interface SceneOptions {
   officeLayout?: OfficeLayout;
   onReady: () => void;
@@ -35,6 +36,7 @@ export function mountScene(host: HTMLElement, options: SceneOptions): SceneHandl
     window.removeEventListener('resize', schedule);
     renderer?.domElement.removeEventListener('webglcontextlost', contextLost);
     disposeOffice(scene);
+    scene.traverse(node => { if (node instanceof DirectionalLight) node.dispose(); });
     scene.clear();
     renderer?.dispose();
     renderer?.forceContextLoss();
@@ -58,16 +60,16 @@ export function mountScene(host: HTMLElement, options: SceneOptions): SceneHandl
       const vertical = camera.fov * Math.PI / 360;
       const horizontal = Math.atan(Math.tan(vertical) * camera.aspect);
       const target = new Vector3(layout.floor.x + layout.floor.width / 2, 0.6, layout.floor.z + layout.floor.depth / 2);
-      const direction = new Vector3(0.5, 1, 0.85).normalize();
+      const direction = new Vector3(0, 1, 1.2).normalize();
       const right = new Vector3(direction.z, 0, -direction.x).normalize();
       const up = new Vector3().crossVectors(direction, right);
       let distance = 1;
       for (const x of [layout.floor.x, layout.floor.x + layout.floor.width])
         for (const z of [layout.floor.z, layout.floor.z + layout.floor.depth])
-          for (const y of [0, 2.6]) {
+          for (const y of [0, 3]) {
             const delta = new Vector3(x, y, z).sub(target);
-            distance = Math.max(distance, delta.dot(direction) + Math.abs(delta.dot(right)) / (Math.tan(horizontal) * 0.9),
-              delta.dot(direction) + Math.abs(delta.dot(up)) / (Math.tan(vertical) * 0.7));
+            distance = Math.max(distance, delta.dot(direction) + Math.abs(delta.dot(right)) / (Math.tan(horizontal) * 0.94),
+              delta.dot(direction) + Math.abs(delta.dot(up)) / (Math.tan(vertical) * (delta.dot(up) > 0 ? 0.7 : 0.92)));
           }
       camera.position.copy(target).add(direction.multiplyScalar(distance));
       camera.far = distance + radius * 3;
@@ -87,14 +89,15 @@ export function mountScene(host: HTMLElement, options: SceneOptions): SceneHandl
     renderer.domElement.setAttribute('aria-label', 'Escritório 3D de um pavimento: análise central, BTC, ETH, coordenação e orçamento, com cinco personagens fictícios em espera');
     layout = options.officeLayout ?? createOfficeLayout();
     scene.background = new Color('#101b27');
-    scene.add(new AmbientLight('#d8e8ff', 1.7));
-    const light = new DirectionalLight('#ffffff', 3);
-    light.position.set(4, 8, 5); scene.add(light);
+    if (renderer.shadowMap) { renderer.shadowMap.enabled = true; renderer.shadowMap.type = PCFShadowMap; }
+    scene.add(new AmbientLight('#fff0d8', 1.25));
+    const light = new DirectionalLight('#ffe1b0', 3);
+    light.position.set(-6, 12, 5); light.castShadow = true; light.shadow.mapSize.set(1024, 1024);
+    const extent = Math.max(layout.floor.width, layout.floor.depth) * 0.7;
+    Object.assign(light.shadow.camera, { left: -extent, right: extent, top: extent, bottom: -extent, near: 0.5, far: 90 });
+    light.shadow.bias = -0.001; light.shadow.normalBias = 0.025; scene.add(light);
 
     const office = createOffice(layout);
-    // Placas acima do lado de acesso das mesas para não encobrirem os ocupantes.
-    for (const station of layout.stations) office.getObjectByName(station.id)!
-      .getObjectByName('station-label')!.position.set(0, 3.2, 1);
     scene.add(office);
     scene.add(createCharacters(createCharacterFixture(layout), layout));
 

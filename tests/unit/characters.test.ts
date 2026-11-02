@@ -43,10 +43,11 @@ describe('cinco personagens fictícios estáticos', () => {
       for (const wall of layout.walls) expect(intersects(bounds, wall.bounds)).toBe(false);
       for (const other of characters) if (other.id !== character.id) expect(intersects(bounds, characterBounds(other))).toBe(false);
     }
-    expect(characters[1].transform.position.x).toBeCloseTo(-4.72 * scale);
-    expect(characters[1].transform.position.z).toBeCloseTo(-2.88 * scale);
-    expect(characters[4].transform.position.x).toBeCloseTo(4.07 * scale);
-    expect(characters[4].transform.position.z).toBeCloseTo(2.88 * scale);
+    // Âncoras da nova planta DEC-003: BTC periférico e gestor no núcleo.
+    expect(characters[1].transform.position.x).toBeCloseTo(-4.07 * scale);
+    expect(characters[1].transform.position.z).toBeCloseTo(6.72 * scale);
+    expect(characters[4].transform.position.x).toBeCloseTo(4.08 * scale);
+    expect(characters[4].transform.position.z).toBeCloseTo(1.02 * scale);
   });
   it('distingue os cinco personagens por cor e acessório', () => {
     const characters = createCharacterFixture(createOfficeLayout());

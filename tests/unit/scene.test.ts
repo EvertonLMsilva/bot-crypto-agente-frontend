@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import type { WebGLRenderer } from 'three';
-import { Box3, BoxGeometry, Mesh, MeshStandardMaterial, PerspectiveCamera, Scene, Sprite, Texture, Vector3 } from 'three';
+import { Box3, BoxGeometry, DirectionalLight, Mesh, MeshStandardMaterial, PerspectiveCamera, Scene, Sprite, Texture, Vector3, WebGLRenderTarget } from 'three';
 import { stationIds } from '../../src/contracts/office';
 import { createOfficeLayout } from '../../src/fixtures/office';
 import { mountScene } from '../../src/scene/mountScene';
@@ -32,6 +32,15 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
     } as unknown as CanvasRenderingContext2D);
   });
   afterEach(() => { document.body.replaceChildren(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+  it('usa luz quente e sombras moderadas para aproximar a referência', () => {
+    const handle = mountScene(host, { onReady: vi.fn(), onError: vi.fn(), createRenderer: () => renderer });
+    try {
+      flush(); const scene = renderer.render.mock.lastCall![0] as Scene;
+      const light = scene.children.find(node => node instanceof DirectionalLight) as DirectionalLight;
+      expect(light.color.r).toBeGreaterThan(light.color.b);
+      expect(light.castShadow).toBe(true); expect(light.shadow.mapSize.width).toBe(1024);
+    } finally { handle.dispose(); }
+  });
   it('monta escritório, cinco postos, câmera e luz; sinaliza pronto após renderizar', () => {
     const ready = vi.fn(); const handle = mountScene(host, { onReady: ready, onError: vi.fn(), createRenderer: () => renderer });
     expect(host.querySelector('canvas')).not.toBeNull(); expect(ready).not.toHaveBeenCalled();
@@ -63,7 +72,8 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
       for (const x of [layout.floor.x, layout.floor.x + layout.floor.width])
         for (const z of [layout.floor.z, layout.floor.z + layout.floor.depth])
           for (const y of [0, 2.6]) points.push(new Vector3(x, y, z).project(camera));
-      for (const point of points) { expect(Math.abs(point.x)).toBeLessThan(0.93); expect(Math.abs(point.y)).toBeLessThan(0.73); }
+      // Enquadramento mais cheio, com margem superior para a identificação da cena.
+      for (const point of points) { expect(Math.abs(point.x)).toBeLessThan(0.97); expect(point.y).toBeLessThan(0.73); expect(point.y).toBeGreaterThan(-0.95); }
       const horizontal = Math.max(...points.map(point => point.x)) - Math.min(...points.map(point => point.x));
       const vertical = Math.max(...points.map(point => point.y)) - Math.min(...points.map(point => point.y));
       expect(Math.max(horizontal, vertical)).toBeGreaterThan(1.2);
@@ -72,6 +82,9 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
   it('libera cada geometria, material, contexto, listener, observer e frame uma vez', () => {
     const handle = mountScene(host, { onReady: vi.fn(), onError: vi.fn(), createRenderer: () => renderer }); flush();
     const scene = renderer.render.mock.calls[0][0] as Scene;
+    const light = scene.children.find(node => node instanceof DirectionalLight) as DirectionalLight;
+    light.shadow.map = new WebGLRenderTarget(16, 16);
+    const shadowDispose = vi.spyOn(light.shadow.map, 'dispose');
     const spies: ReturnType<typeof vi.spyOn>[] = [];
     const resources = new Set<{ dispose: () => void }>();
     scene.traverse(node => {
@@ -87,6 +100,7 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
     for (const spy of spies) expect(spy).toHaveBeenCalledOnce();
     expect(disconnect).toHaveBeenCalledOnce(); expect(renderer.dispose).toHaveBeenCalledOnce();
     expect(renderer.forceContextLoss).toHaveBeenCalledOnce(); expect(host.children).toHaveLength(0);
+    expect(shadowDispose).toHaveBeenCalledOnce();
     expect(frames.size).toBe(0); window.dispatchEvent(new Event('resize')); expect(frames.size).toBe(0);
   });
   it('reporta falha ao criar renderer', () => {
@@ -125,18 +139,18 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
           const points = [];
           for (const x of [body.min.x, body.max.x]) for (const y of [body.min.y, body.max.y])
             for (const z of [body.min.z, body.max.z]) points.push(new Vector3(x, y, z).project(camera));
-          const label = scene.getObjectByName(id)!.getObjectByName('station-label')!;
-          const center = label.getWorldPosition(new Vector3());
-          const depth = -center.clone().applyMatrix4(camera.matrixWorldInverse).z;
-          const scale = label.getWorldScale(new Vector3());
-          center.project(camera);
-          const halfHeight = scale.y / (2 * depth * Math.tan(camera.fov * Math.PI / 360));
-          const halfWidth = scale.x / (2 * depth * Math.tan(camera.fov * Math.PI / 360) * camera.aspect);
-          expect(Math.abs(center.y) + halfHeight).toBeLessThan(0.95);
-          const clear = Math.max(...points.map(p => p.y)) < center.y - halfHeight ||
-            Math.max(...points.map(p => p.x)) < center.x - halfWidth ||
-            Math.min(...points.map(p => p.x)) > center.x + halfWidth;
-          expect(clear, id).toBe(true);
+          for (const stationId of stationIds) {
+          const label = scene.getObjectByName(stationId)!.getObjectByName('station-label')!;
+          // As placas agora são meshes presos ao mobiliário, sem billboard.
+          const plate = new Box3().setFromObject(label); const platePoints = [];
+          for (const x of [plate.min.x, plate.max.x]) for (const y of [plate.min.y, plate.max.y])
+            for (const z of [plate.min.z, plate.max.z]) platePoints.push(new Vector3(x, y, z).project(camera));
+          for (const point of platePoints) { expect(Math.abs(point.y)).toBeLessThan(0.95); expect(Math.abs(point.x)).toBeLessThan(0.98); }
+          const clear = Math.max(...points.map(p => p.y)) < Math.min(...platePoints.map(p => p.y)) ||
+            Math.max(...points.map(p => p.x)) < Math.min(...platePoints.map(p => p.x)) ||
+            Math.min(...points.map(p => p.x)) > Math.max(...platePoints.map(p => p.x));
+          expect(clear, `${id} / ${stationId}`).toBe(true);
+          }
         }
       }
     } finally { handle.dispose(); }

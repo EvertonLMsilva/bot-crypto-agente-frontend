@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { SceneHandle, SceneOptions } from '../scene/mountScene';
 import type { SceneSelection } from '../contracts/selection';
+import type { PanelPresentation } from '../contracts/panels';
+
+const OfficePanels = lazy(() => import('./OfficePanels').then(module => ({ default: module.OfficePanels })));
 
 type SceneLoader = () => Promise<{ mountScene: (host: HTMLElement, options: SceneOptions) => SceneHandle }>;
 const defaultLoader: SceneLoader = () => import('../scene/mountScene');
@@ -9,18 +12,21 @@ export function SceneView({ loadScene = defaultLoader }: { loadScene?: SceneLoad
   const host = useRef<HTMLDivElement>(null);
   const handle = useRef<SceneHandle | undefined>(undefined);
   const [selection, setSelection] = useState<SceneSelection | null>(null);
+  const [panels, setPanels] = useState<PanelPresentation | undefined>(undefined);
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading');
   useEffect(() => {
     let active = true;
     let scene: SceneHandle | undefined;
     setState('loading');
     setSelection(null);
+    setPanels(undefined);
     loadScene().then(module => {
       if (!active || !host.current) return;
       scene = module.mountScene(host.current, {
         onReady: () => { if (active) setState('ready'); },
         onError: () => { if (active) setState('failed'); },
         onSelection: value => { if (active) setSelection(value); },
+        onPanels: value => { if (active) setPanels(value); },
       });
       handle.current = scene;
     }).catch(() => { if (active) setState('failed'); });
@@ -28,7 +34,7 @@ export function SceneView({ loadScene = defaultLoader }: { loadScene?: SceneLoad
   }, [loadScene]);
 
   return <section className="scene-panel" aria-label="Visualização 3D">
-    <div className="scene-meta"><span>ESCRITÓRIO VIRTUAL</span><span>05 / CÂMERA E SELEÇÃO</span></div>
+    <div className="scene-meta"><span>ESCRITÓRIO VIRTUAL</span><span>06 / TELÃO E PAINÉIS</span></div>
     <div className="scene-host" ref={host} />
     {state === 'failed' ? <div className="scene-message error" role="alert">
       <strong>Não foi possível exibir a cena 3D.</strong>
@@ -44,5 +50,6 @@ export function SceneView({ loadScene = defaultLoader }: { loadScene?: SceneLoad
       </span>
     </div>
     <div className="scene-caption"><span>Cinco personagens fictícios · em espera</span><span>Um pavimento / postos reservados</span></div>
+    {panels && <Suspense fallback={<p>Preparando painéis fictícios…</p>}><OfficePanels data={panels} /></Suspense>}
   </section>;
 }

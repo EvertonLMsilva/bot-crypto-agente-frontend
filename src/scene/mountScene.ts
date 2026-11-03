@@ -11,6 +11,10 @@ import { animateCharacters, collectObstacles, createVisualClock } from './animat
 import { createCameraControls } from './cameraControls';
 import { bindSelectionInput, createSceneSelection } from './sceneSelection';
 import type { SceneSelection } from '../contracts/selection';
+import type { Object3D } from 'three';
+import type { PanelPresentation } from '../contracts/panels';
+import { createPanelFixture, withVisualActivities } from '../fixtures/panels';
+import { createCentralScreen } from './createCentralScreen';
 
 type Renderer = Pick<WebGLRenderer, 'domElement' | 'setSize' | 'setPixelRatio' | 'render' | 'dispose' | 'forceContextLoss'> &
   Partial<Pick<WebGLRenderer, 'shadowMap'>>;
@@ -19,6 +23,7 @@ export interface SceneOptions {
   onReady: () => void;
   onError: () => void;
   onSelection?: (value: SceneSelection | null) => void;
+  onPanels?: (value: PanelPresentation) => void;
   /** Ponto de injeção para testar ciclo de vida sem confundir mocks com WebGL real. */
   createRenderer?: () => Renderer;
 }
@@ -31,6 +36,7 @@ export interface AnimatedSceneHandle extends SceneHandle {
   clearSelection: () => void;
   getSelection: () => SceneSelection | null;
   getCameraSnapshot: () => ReturnType<ReturnType<typeof createCameraControls>['snapshot']> | undefined;
+  getPanelSnapshot: () => PanelPresentation | undefined;
 }
 
 export function mountScene(host: HTMLElement, options: SceneOptions): AnimatedSceneHandle {
@@ -47,6 +53,9 @@ export function mountScene(host: HTMLElement, options: SceneOptions): AnimatedSc
   let navigation: ReturnType<typeof createCameraControls> | undefined;
   let selection: ReturnType<typeof createSceneSelection> | undefined;
   let input: ReturnType<typeof bindSelectionInput> | undefined;
+  let centralScreen: ReturnType<typeof createCentralScreen> | undefined;
+  let presentation: PanelPresentation | undefined;
+  let panelActors: readonly Object3D[] = [], activityKey = '';
   let contextUnavailable = false;
   let drawing = false;
   let manualPaused = false, visibilityPaused = false;
@@ -74,6 +83,7 @@ export function mountScene(host: HTMLElement, options: SceneOptions): AnimatedSc
     renderer?.domElement.removeEventListener('webglcontextlost', contextLost);
     renderer?.domElement.removeEventListener('webglcontextrestored', contextRestored);
     input?.dispose(); navigation?.dispose(); selection?.dispose();
+    centralScreen?.dispose();
     disposeOffice(scene);
     scene.traverse(node => { if (node instanceof DirectionalLight) node.dispose(); });
     scene.clear();
@@ -110,6 +120,11 @@ export function mountScene(host: HTMLElement, options: SceneOptions): AnimatedSc
       viewport = nextViewport;
       }
       animation?.apply(clock.sample(realTimestamp));
+      const nextActivityKey = panelActors.map(actor => `${actor.userData.agentId}:${actor.userData.activity}`).join('|');
+      if (presentation && nextActivityKey !== activityKey) {
+        presentation = withVisualActivities(presentation, panelActors.map(actor => ({ agentId: actor.userData.agentId, activity: actor.userData.activity })));
+        centralScreen?.update(presentation); activityKey = nextActivityKey; options.onPanels?.(presentation);
+      }
       navigation?.update(); selection?.update();
       renderer.render(scene, camera);
       if (!ready) { ready = true; options.onReady(); }
@@ -141,6 +156,8 @@ export function mountScene(host: HTMLElement, options: SceneOptions): AnimatedSc
     const models = createCharacters(people, layout); scene.add(models);
     animation = animateCharacters(models, createActivityFixture(layout, people, collectObstacles(office)));
     animation.apply(0);
+    presentation = createPanelFixture(); panelActors = models.children;
+    centralScreen = createCentralScreen(layout, presentation); office.add(centralScreen.object);
     navigation = createCameraControls(camera, renderer.domElement, layout, schedule);
     selection = createSceneSelection(scene, office, models, layout, value => { options.onSelection?.(value); schedule(); });
     input = bindSelectionInput(renderer.domElement, ndc => {
@@ -162,5 +179,6 @@ export function mountScene(host: HTMLElement, options: SceneOptions): AnimatedSc
   return { dispose, pause, resume, resetCamera: () => { if (!contextUnavailable) navigation?.reset(); },
     clearSelection: () => selection?.clear(), getSelection: () => selection?.current() ?? null,
     getCameraSnapshot: () => navigation?.snapshot(),
+    getPanelSnapshot: () => presentation,
     getAnimationSnapshot: () => ({ timeMs: clock.timeMs, paused: !clock.running, characters: animation?.snapshot() ?? [] }) };
 }

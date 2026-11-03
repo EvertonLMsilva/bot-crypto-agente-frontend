@@ -32,6 +32,21 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
     } as unknown as CanvasRenderingContext2D);
   });
   afterEach(() => { document.body.replaceChildren(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+  it('atualiza os painéis pela timeline existente, sem recriar textura ou avançar carteira', () => {
+    const panels = vi.fn(); const handle = mountScene(host, { onReady: vi.fn(), onError: vi.fn(), onPanels: panels, createRenderer: () => renderer });
+    try {
+      flush(0); expect(panels).toHaveBeenCalledOnce(); const initial = panels.mock.lastCall![0];
+      const scene = renderer.render.mock.lastCall![0] as Scene;
+      expect(scene.getObjectByName('central-screen')).toBeDefined();
+      flush(1000); expect(panels).toHaveBeenCalledOnce(); flush(2500);
+      expect(panels.mock.lastCall![0].agents.every((agent: { activity: string }) => agent.activity === 'WORKING')).toBe(true);
+      flush(6500); expect(panels.mock.lastCall![0].agents.some((agent: { activity: string }) => agent.activity === 'WALKING')).toBe(true);
+      expect(panels.mock.lastCall![0].portfolio).toEqual(initial.portfolio);
+      const before = handle.getAnimationSnapshot(); handle.pause(); width = 390; resize([], {} as ResizeObserver); flush(20000);
+      expect(handle.getAnimationSnapshot().characters).toEqual(before.characters);
+      expect(scene.getObjectByName('characters')!.children).toHaveLength(5);
+    } finally { handle.dispose(); }
+  });
   it('usa luz quente e sombras moderadas para aproximar a referência', () => {
     const handle = mountScene(host, { onReady: vi.fn(), onError: vi.fn(), createRenderer: () => renderer });
     try {
@@ -39,6 +54,19 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
       const light = scene.children.find(node => node instanceof DirectionalLight) as DirectionalLight;
       expect(light.color.r).toBeGreaterThan(light.color.b);
       expect(light.castShadow).toBe(true); expect(light.shadow.mapSize.width).toBe(1024);
+    } finally { handle.dispose(); }
+  });
+  it('encerra sem frames ou recursos órfãos se a textura do telão falhar na montagem', () => {
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({ fillRect: vi.fn(),
+      fillText: (text: string) => { if (text.includes('CARTEIRA')) throw new Error('telão'); },
+      measureText: () => ({ width: 100 }),
+    } as unknown as CanvasRenderingContext2D);
+    const onError = vi.fn(), onReady = vi.fn(); const texture = vi.spyOn(Texture.prototype, 'dispose');
+    const handle = mountScene(host, { onReady, onError, createRenderer: () => renderer });
+    try {
+      expect(onError).toHaveBeenCalledOnce(); expect(onReady).not.toHaveBeenCalled();
+      expect(renderer.dispose).toHaveBeenCalledOnce(); expect(texture).toHaveBeenCalled();
+      expect(frames.size).toBe(0); expect(host.children).toHaveLength(0);
     } finally { handle.dispose(); }
   });
   it('monta escritório, cinco postos, câmera e luz; sinaliza pronto após renderizar', () => {

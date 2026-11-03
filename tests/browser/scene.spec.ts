@@ -81,14 +81,16 @@ test('apresenta falha compreensível quando WebGL não está disponível', async
   await expect(page.locator('.scene-host canvas')).toHaveCount(0);
 });
 
-test('perda real do contexto WebGL encerra a cena e avisa o usuário', async ({ page }) => {
+test('perda real do contexto WebGL suspende, avisa e restaura a cena', async ({ page }) => {
   await page.goto('/'); await expect(page.getByRole('status')).toHaveText('Cena 3D pronta');
   await page.locator('canvas').evaluate(element => {
     const gl = (element as HTMLCanvasElement).getContext('webgl2')!;
     const extension = gl.getExtension('WEBGL_lose_context');
     if (!extension) throw new Error('Extensão de teste de perda de contexto indisponível');
-    extension.loseContext();
+    (element as HTMLCanvasElement & { restoreContext: () => void }).restoreContext = () => extension.restoreContext(); extension.loseContext();
   });
   await expect(page.getByRole('alert')).toContainText('Não foi possível');
-  await expect(page.locator('.scene-host canvas')).toHaveCount(0);
+  await expect(page.locator('.scene-host canvas')).toHaveCount(1);
+  await page.locator('canvas').evaluate(element => (element as HTMLCanvasElement & { restoreContext: () => void }).restoreContext());
+  await expect(page.getByRole('status')).toHaveText('Cena 3D pronta');
 });

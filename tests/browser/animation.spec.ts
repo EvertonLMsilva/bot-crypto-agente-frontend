@@ -82,15 +82,17 @@ test('2.4: WebGL2 real evolui posição/pose e preserva pausa, resize e limpeza'
   await writeFile('test-results/topic-2.4/animation-browser.json', JSON.stringify({ gl, initial, idle, working, walkingA, walkingB, paused, resumed, meeting, meetingNext, errors, external }, null, 2));
 });
 
-test('2.4: perda real de contexto encerra uma cena com animação ativa', async ({ page }) => {
+test('2.4: perda real de contexto suspende e restaura uma cena com animação ativa', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto('/'); await expect(page.getByRole('status')).toHaveText('Cena 3D pronta');
   await page.locator('canvas').evaluate(element => {
     const gl = (element as HTMLCanvasElement).getContext('webgl2')!;
     const extension = gl.getExtension('WEBGL_lose_context');
     if (!extension) throw new Error('Extensão de teste indisponível');
-    extension.loseContext();
+    (element as HTMLCanvasElement & { restoreContext: () => void }).restoreContext = () => extension.restoreContext(); extension.loseContext();
   });
   await expect(page.getByRole('alert')).toContainText('Não foi possível');
-  await expect(page.locator('canvas')).toHaveCount(0); expect(errors).toEqual([]);
+  await expect(page.locator('canvas')).toHaveCount(1);
+  await page.locator('canvas').evaluate(element => (element as HTMLCanvasElement & { restoreContext: () => void }).restoreContext());
+  await expect(page.getByRole('status')).toHaveText('Cena 3D pronta'); expect(errors).toEqual([]);
 });

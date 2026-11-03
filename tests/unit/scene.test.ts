@@ -161,10 +161,17 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
     expect(onError).toHaveBeenCalledOnce(); expect(ready).not.toHaveBeenCalled();
     expect(renderer.dispose).toHaveBeenCalledOnce(); expect(host.children).toHaveLength(0);
   });
-  it('trata perda de contexto como falha e encerra a cena', () => {
-    const onError = vi.fn(); mountScene(host, { onReady: vi.fn(), onError, createRenderer: () => renderer }); flush();
+  it('suspende contexto perdido e restaura câmera, seleção e tempo sem salto', () => {
+    const onError = vi.fn(); const restored = vi.fn();
+    const handle = mountScene(host, { onReady: restored, onError, createRenderer: () => renderer }); flush(); flush(6500);
+    const before = handle.getAnimationSnapshot(); const cameraBefore = handle.getCameraSnapshot();
     renderer.domElement.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
-    expect(onError).toHaveBeenCalledOnce(); expect(renderer.dispose).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledOnce(); expect(renderer.dispose).not.toHaveBeenCalled(); expect(frames.size).toBe(0);
+    window.dispatchEvent(new Event('resize')); flush(20000); expect(renderer.render).toHaveBeenCalledTimes(2);
+    renderer.domElement.dispatchEvent(new Event('webglcontextrestored')); flush(30000);
+    expect(handle.getAnimationSnapshot().timeMs).toBe(before.timeMs);
+    expect(handle.getCameraSnapshot()).toEqual(cameraBefore); expect(restored).toHaveBeenCalledTimes(2);
+    flush(31000); expect(handle.getAnimationSnapshot().timeMs).toBe(7500); handle.dispose();
   });
   it('mantém um único loop e pausa/retoma sem contar tempo pausado ou resetar no resize', () => {
     const ready = vi.fn(); const handle = mountScene(host, { onReady: ready, onError: vi.fn(), createRenderer: () => renderer });

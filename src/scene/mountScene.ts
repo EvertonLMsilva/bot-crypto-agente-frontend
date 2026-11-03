@@ -1,5 +1,5 @@
 import {
-  AmbientLight, Color, DirectionalLight, PCFShadowMap, PerspectiveCamera, Scene, Vector3, WebGLRenderer,
+  AmbientLight, Color, DirectionalLight, PCFShadowMap, PerspectiveCamera, Scene, WebGLRenderer,
 } from 'three';
 import type { OfficeLayout } from '../contracts/office';
 import { createOfficeLayout } from '../fixtures/office';
@@ -8,6 +8,9 @@ import { createCharacterFixture } from '../fixtures/characters';
 import { createCharacters } from './createCharacters';
 import { createActivityFixture } from '../fixtures/activities';
 import { animateCharacters, collectObstacles, createVisualClock } from './animateCharacters';
+import { createCameraControls } from './cameraControls';
+import { bindSelectionInput, createSceneSelection } from './sceneSelection';
+import type { SceneSelection } from '../contracts/selection';
 
 type Renderer = Pick<WebGLRenderer, 'domElement' | 'setSize' | 'setPixelRatio' | 'render' | 'dispose' | 'forceContextLoss'> &
   Partial<Pick<WebGLRenderer, 'shadowMap'>>;
@@ -15,14 +18,19 @@ export interface SceneOptions {
   officeLayout?: OfficeLayout;
   onReady: () => void;
   onError: () => void;
+  onSelection?: (value: SceneSelection | null) => void;
   /** Ponto de injeção para testar ciclo de vida sem confundir mocks com WebGL real. */
   createRenderer?: () => Renderer;
 }
-export interface SceneHandle { dispose: () => void }
+export interface SceneHandle { dispose: () => void; resetCamera?: () => void; clearSelection?: () => void }
 export interface AnimatedSceneHandle extends SceneHandle {
   pause: () => void;
   resume: () => void;
   getAnimationSnapshot: () => { timeMs: number; paused: boolean; characters: ReturnType<ReturnType<typeof animateCharacters>['snapshot']> };
+  resetCamera: () => void;
+  clearSelection: () => void;
+  getSelection: () => SceneSelection | null;
+  getCameraSnapshot: () => ReturnType<ReturnType<typeof createCameraControls>['snapshot']> | undefined;
 }
 
 export function mountScene(host: HTMLElement, options: SceneOptions): AnimatedSceneHandle {
@@ -36,12 +44,17 @@ export function mountScene(host: HTMLElement, options: SceneOptions): AnimatedSc
   let layout: OfficeLayout;
   const clock = createVisualClock();
   let animation: ReturnType<typeof animateCharacters> | undefined;
+  let navigation: ReturnType<typeof createCameraControls> | undefined;
+  let selection: ReturnType<typeof createSceneSelection> | undefined;
+  let input: ReturnType<typeof bindSelectionInput> | undefined;
+  let contextUnavailable = false;
+  let drawing = false;
   let manualPaused = false, visibilityPaused = false;
   let viewport = '';
 
   function syncPause() {
     if (disposed) return;
-    if (manualPaused || visibilityPaused) {
+    if (manualPaused || visibilityPaused || contextUnavailable) {
       clock.pause();
       if (frame !== undefined) { cancelAnimationFrame(frame); frame = undefined; }
     } else { clock.resume(); schedule(); }
@@ -59,6 +72,8 @@ export function mountScene(host: HTMLElement, options: SceneOptions): AnimatedSc
     window.removeEventListener('resize', schedule);
     document.removeEventListener('visibilitychange', visibilityChanged);
     renderer?.domElement.removeEventListener('webglcontextlost', contextLost);
+    renderer?.domElement.removeEventListener('webglcontextrestored', contextRestored);
+    input?.dispose(); navigation?.dispose(); selection?.dispose();
     disposeOffice(scene);
     scene.traverse(node => { if (node instanceof DirectionalLight) node.dispose(); });
     scene.clear();
@@ -68,56 +83,48 @@ export function mountScene(host: HTMLElement, options: SceneOptions): AnimatedSc
   }
 
   function fail() { dispose(); options.onError(); }
-  function contextLost(event: Event) { event.preventDefault(); if (!disposed) fail(); }
+  function contextLost(event: Event) {
+    event.preventDefault(); if (disposed || contextUnavailable) return;
+    contextUnavailable = true; ready = false;
+    navigation?.setEnabled(false); input?.setEnabled(false); syncPause(); options.onError();
+  }
+  function contextRestored() {
+    if (disposed || !contextUnavailable) return;
+    contextUnavailable = false; viewport = '';
+    navigation?.setEnabled(true); input?.setEnabled(true); syncPause(); schedule();
+  }
   function draw(realTimestamp: number) {
     frame = undefined;
-    if (disposed || !renderer) return;
+    if (disposed || contextUnavailable || !renderer) return;
     const width = host.clientWidth;
     const height = host.clientHeight;
     if (width < 1 || height < 1) { clock.resetAnchor(); return; }
+    drawing = true;
     try {
       const density = Math.min(window.devicePixelRatio || 1, 2);
       const nextViewport = `${width}:${height}:${density}`;
       if (nextViewport !== viewport) {
       renderer.setPixelRatio(density);
       renderer.setSize(width, height, false);
-      camera.aspect = width / height;
-      // Ajuste automático simples, sem controles: encaixa piso e placas com margem.
-      const radius = Math.hypot(layout.floor.width, layout.floor.depth) / 2 + 3;
-      const vertical = camera.fov * Math.PI / 360;
-      const horizontal = Math.atan(Math.tan(vertical) * camera.aspect);
-      const target = new Vector3(layout.floor.x + layout.floor.width / 2, 0.6, layout.floor.z + layout.floor.depth / 2);
-      const direction = new Vector3(0, 1, 1.2).normalize();
-      const right = new Vector3(direction.z, 0, -direction.x).normalize();
-      const up = new Vector3().crossVectors(direction, right);
-      let distance = 1;
-      for (const x of [layout.floor.x, layout.floor.x + layout.floor.width])
-        for (const z of [layout.floor.z, layout.floor.z + layout.floor.depth])
-          for (const y of [0, 3]) {
-            const delta = new Vector3(x, y, z).sub(target);
-            distance = Math.max(distance, delta.dot(direction) + Math.abs(delta.dot(right)) / (Math.tan(horizontal) * 0.94),
-              delta.dot(direction) + Math.abs(delta.dot(up)) / (Math.tan(vertical) * (delta.dot(up) > 0 ? 0.7 : 0.92)));
-          }
-      camera.position.copy(target).add(direction.multiplyScalar(distance));
-      camera.far = distance + radius * 3;
-      camera.lookAt(target);
-      camera.updateProjectionMatrix();
+      navigation?.resize(width, height);
       viewport = nextViewport;
       }
       animation?.apply(clock.sample(realTimestamp));
+      navigation?.update(); selection?.update();
       renderer.render(scene, camera);
       if (!ready) { ready = true; options.onReady(); }
-      if (clock.running) schedule();
     } catch { fail(); }
+    finally { drawing = false; if (clock.running) schedule(); }
   }
   function schedule() {
-    if (!disposed && frame === undefined) frame = requestAnimationFrame(draw);
+    if (!disposed && !drawing && !contextUnavailable && frame === undefined) frame = requestAnimationFrame(draw);
   }
 
   try {
     renderer = options.createRenderer?.() ?? new WebGLRenderer({ antialias: true, powerPreference: 'low-power' });
     renderer.domElement.setAttribute('role', 'img');
     renderer.domElement.setAttribute('aria-label', 'Escritório 3D de um pavimento: análise central, BTC, ETH, coordenação e orçamento, com cinco personagens fictícios e atividades locais');
+    renderer.domElement.tabIndex = 0;
     layout = options.officeLayout ?? createOfficeLayout();
     scene.background = new Color('#101b27');
     if (renderer.shadowMap) { renderer.shadowMap.enabled = true; renderer.shadowMap.type = PCFShadowMap; }
@@ -134,8 +141,14 @@ export function mountScene(host: HTMLElement, options: SceneOptions): AnimatedSc
     const models = createCharacters(people, layout); scene.add(models);
     animation = animateCharacters(models, createActivityFixture(layout, people, collectObstacles(office)));
     animation.apply(0);
+    navigation = createCameraControls(camera, renderer.domElement, layout, schedule);
+    selection = createSceneSelection(scene, office, models, layout, value => { options.onSelection?.(value); schedule(); });
+    input = bindSelectionInput(renderer.domElement, ndc => {
+      renderer!.domElement.focus({ preventScroll: true }); selection?.pick(ndc, camera);
+    }, () => selection?.clear());
 
     renderer.domElement.addEventListener('webglcontextlost', contextLost);
+    renderer.domElement.addEventListener('webglcontextrestored', contextRestored);
     host.append(renderer.domElement);
     observer = new ResizeObserver(schedule);
     observer.observe(host);
@@ -146,5 +159,8 @@ export function mountScene(host: HTMLElement, options: SceneOptions): AnimatedSc
     // Um único loop; pausas internas não controlam a simulação financeira.
     schedule();
   } catch { fail(); }
-  return { dispose, pause, resume, getAnimationSnapshot: () => ({ timeMs: clock.timeMs, paused: !clock.running, characters: animation?.snapshot() ?? [] }) };
+  return { dispose, pause, resume, resetCamera: () => { if (!contextUnavailable) navigation?.reset(); },
+    clearSelection: () => selection?.clear(), getSelection: () => selection?.current() ?? null,
+    getCameraSnapshot: () => navigation?.snapshot(),
+    getAnimationSnapshot: () => ({ timeMs: clock.timeMs, paused: !clock.running, characters: animation?.snapshot() ?? [] }) };
 }

@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SceneView } from '../../src/components/SceneView';
 import { mountApp } from '../../src/bootstrap';
@@ -6,6 +6,21 @@ import type { SceneOptions, SceneHandle } from '../../src/scene/mountScene';
 
 afterEach(cleanup);
 describe('interface e bootstrap', () => {
+  it('expõe reenquadramento e limpeza, comunica seleção fictícia e recupera o estado pronto', async () => {
+    let options!: SceneOptions; const resetCamera = vi.fn(), clearSelection = vi.fn(), dispose = vi.fn();
+    const view = render(<SceneView loadScene={async () => ({ mountScene: (_host, opts) => {
+      options = opts; return { dispose, resetCamera, clearSelection };
+    } })} />);
+    await waitFor(() => expect(options).toBeDefined());
+    await act(async () => { options.onReady(); options.onSelection?.({ type: 'character', id: 'btc-specialist' }); });
+    expect(screen.getByText('Personagem: btc-specialist · fictício')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Reenquadrar' })); expect(resetCamera).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'Limpar seleção' })); expect(clearSelection).toHaveBeenCalledOnce();
+    await act(async () => { options.onSelection?.(null); options.onError(); });
+    expect(screen.getByRole('alert')).toBeTruthy();
+    await act(async () => options.onReady()); expect(screen.getByRole('status').textContent).toContain('pronta');
+    view.unmount(); expect(dispose).toHaveBeenCalledOnce();
+  });
   it('inicializa aplicação com identificação fictícia e encerra o root', async () => {
     const host = document.createElement('div'); document.body.append(host);
     let unmount!: () => void;

@@ -6,6 +6,8 @@ import { createOfficeLayout } from '../fixtures/office';
 import { createOffice, disposeOffice } from './createOffice';
 import { createCharacterFixture } from '../fixtures/characters';
 import { createCharacters } from './createCharacters';
+import { createActivityFixture } from '../fixtures/activities';
+import { animateCharacters, collectObstacles, createVisualClock } from './animateCharacters';
 
 type Renderer = Pick<WebGLRenderer, 'domElement' | 'setSize' | 'setPixelRatio' | 'render' | 'dispose' | 'forceContextLoss'> &
   Partial<Pick<WebGLRenderer, 'shadowMap'>>;
@@ -17,8 +19,13 @@ export interface SceneOptions {
   createRenderer?: () => Renderer;
 }
 export interface SceneHandle { dispose: () => void }
+export interface AnimatedSceneHandle extends SceneHandle {
+  pause: () => void;
+  resume: () => void;
+  getAnimationSnapshot: () => { timeMs: number; paused: boolean; characters: ReturnType<ReturnType<typeof animateCharacters>['snapshot']> };
+}
 
-export function mountScene(host: HTMLElement, options: SceneOptions): SceneHandle {
+export function mountScene(host: HTMLElement, options: SceneOptions): AnimatedSceneHandle {
   const scene = new Scene();
   const camera = new PerspectiveCamera(42, 1, 0.1, 100);
   let renderer: Renderer | undefined;
@@ -27,13 +34,30 @@ export function mountScene(host: HTMLElement, options: SceneOptions): SceneHandl
   let disposed = false;
   let ready = false;
   let layout: OfficeLayout;
+  const clock = createVisualClock();
+  let animation: ReturnType<typeof animateCharacters> | undefined;
+  let manualPaused = false, visibilityPaused = false;
+  let viewport = '';
+
+  function syncPause() {
+    if (disposed) return;
+    if (manualPaused || visibilityPaused) {
+      clock.pause();
+      if (frame !== undefined) { cancelAnimationFrame(frame); frame = undefined; }
+    } else { clock.resume(); schedule(); }
+  }
+  function visibilityChanged() { visibilityPaused = document.hidden; syncPause(); }
+  function pause() { manualPaused = true; syncPause(); }
+  function resume() { manualPaused = false; syncPause(); }
 
   function dispose() {
     if (disposed) return;
     disposed = true;
+    clock.pause();
     if (frame !== undefined) cancelAnimationFrame(frame);
     observer?.disconnect();
     window.removeEventListener('resize', schedule);
+    document.removeEventListener('visibilitychange', visibilityChanged);
     renderer?.domElement.removeEventListener('webglcontextlost', contextLost);
     disposeOffice(scene);
     scene.traverse(node => { if (node instanceof DirectionalLight) node.dispose(); });
@@ -45,14 +69,17 @@ export function mountScene(host: HTMLElement, options: SceneOptions): SceneHandl
 
   function fail() { dispose(); options.onError(); }
   function contextLost(event: Event) { event.preventDefault(); if (!disposed) fail(); }
-  function draw() {
+  function draw(realTimestamp: number) {
     frame = undefined;
     if (disposed || !renderer) return;
     const width = host.clientWidth;
     const height = host.clientHeight;
-    if (width < 1 || height < 1) return;
+    if (width < 1 || height < 1) { clock.resetAnchor(); return; }
     try {
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      const density = Math.min(window.devicePixelRatio || 1, 2);
+      const nextViewport = `${width}:${height}:${density}`;
+      if (nextViewport !== viewport) {
+      renderer.setPixelRatio(density);
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       // Ajuste automático simples, sem controles: encaixa piso e placas com margem.
@@ -75,8 +102,12 @@ export function mountScene(host: HTMLElement, options: SceneOptions): SceneHandl
       camera.far = distance + radius * 3;
       camera.lookAt(target);
       camera.updateProjectionMatrix();
+      viewport = nextViewport;
+      }
+      animation?.apply(clock.sample(realTimestamp));
       renderer.render(scene, camera);
       if (!ready) { ready = true; options.onReady(); }
+      if (clock.running) schedule();
     } catch { fail(); }
   }
   function schedule() {
@@ -86,7 +117,7 @@ export function mountScene(host: HTMLElement, options: SceneOptions): SceneHandl
   try {
     renderer = options.createRenderer?.() ?? new WebGLRenderer({ antialias: true, powerPreference: 'low-power' });
     renderer.domElement.setAttribute('role', 'img');
-    renderer.domElement.setAttribute('aria-label', 'Escritório 3D de um pavimento: análise central, BTC, ETH, coordenação e orçamento, com cinco personagens fictícios em espera');
+    renderer.domElement.setAttribute('aria-label', 'Escritório 3D de um pavimento: análise central, BTC, ETH, coordenação e orçamento, com cinco personagens fictícios e atividades locais');
     layout = options.officeLayout ?? createOfficeLayout();
     scene.background = new Color('#101b27');
     if (renderer.shadowMap) { renderer.shadowMap.enabled = true; renderer.shadowMap.type = PCFShadowMap; }
@@ -99,15 +130,21 @@ export function mountScene(host: HTMLElement, options: SceneOptions): SceneHandl
 
     const office = createOffice(layout);
     scene.add(office);
-    scene.add(createCharacters(createCharacterFixture(layout), layout));
+    const people = createCharacterFixture(layout);
+    const models = createCharacters(people, layout); scene.add(models);
+    animation = animateCharacters(models, createActivityFixture(layout, people, collectObstacles(office)));
+    animation.apply(0);
 
     renderer.domElement.addEventListener('webglcontextlost', contextLost);
     host.append(renderer.domElement);
     observer = new ResizeObserver(schedule);
     observer.observe(host);
     window.addEventListener('resize', schedule);
-    // Cena estática: renderiza só na montagem e no resize, sem loop ocioso.
+    document.addEventListener('visibilitychange', visibilityChanged);
+    visibilityPaused = document.hidden;
+    if (visibilityPaused) clock.pause();
+    // Um único loop; pausas internas não controlam a simulação financeira.
     schedule();
   } catch { fail(); }
-  return { dispose };
+  return { dispose, pause, resume, getAnimationSnapshot: () => ({ timeMs: clock.timeMs, paused: !clock.running, characters: animation?.snapshot() ?? [] }) };
 }

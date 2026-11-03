@@ -16,7 +16,7 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
     dispose: Mock<() => void>; forceContextLoss: Mock<() => void> };
   let width: number;
   let height: number;
-  const flush = () => { const queued = [...frames.values()]; frames.clear(); queued.forEach(fn => fn(0)); };
+  const flush = (timestamp = 0) => { const queued = [...frames.values()]; frames.clear(); queued.forEach(fn => fn(timestamp)); };
   beforeEach(() => {
     width = 800; height = 400; frames = new Map(); let sequence = 0;
     host = document.createElement('div'); document.body.append(host);
@@ -165,5 +165,38 @@ describe('ciclo de vida 3D (renderer simulado, sem comprovação WebGL)', () => 
     const onError = vi.fn(); mountScene(host, { onReady: vi.fn(), onError, createRenderer: () => renderer }); flush();
     renderer.domElement.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
     expect(onError).toHaveBeenCalledOnce(); expect(renderer.dispose).toHaveBeenCalledOnce();
+  });
+  it('mantém um único loop e pausa/retoma sem contar tempo pausado ou resetar no resize', () => {
+    const ready = vi.fn(); const handle = mountScene(host, { onReady: ready, onError: vi.fn(), createRenderer: () => renderer });
+    try {
+      flush(0); expect(frames.size).toBe(1); flush(6500);
+      const before = handle.getAnimationSnapshot(); expect(before.timeMs).toBe(6500);
+      expect(before.characters).toHaveLength(5); expect(before.characters.some(character => character.activity === 'WALKING')).toBe(true);
+      handle.pause(); expect(frames.size).toBe(0);
+      width = 350; resize([], {} as ResizeObserver); flush(20000);
+      expect(handle.getAnimationSnapshot().characters).toEqual(before.characters);
+      expect(handle.getAnimationSnapshot().timeMs).toBe(6500); expect(frames.size).toBe(0);
+      handle.resume(); handle.resume(); expect(frames.size).toBe(1);
+      flush(30000); expect(handle.getAnimationSnapshot().timeMs).toBe(6500);
+      flush(31000); expect(handle.getAnimationSnapshot().timeMs).toBe(7500);
+      expect(ready).toHaveBeenCalledOnce(); expect(frames.size).toBe(1);
+    } finally { handle.dispose(); }
+    expect(frames.size).toBe(0);
+  });
+  it('suspende a animação com a página oculta e preserva uma pausa manual', () => {
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const handle = mountScene(host, { onReady: vi.fn(), onError: vi.fn(), createRenderer: () => renderer });
+    try {
+      flush(); hidden.mockReturnValue(true); document.dispatchEvent(new Event('visibilitychange')); expect(frames.size).toBe(0);
+      handle.pause(); hidden.mockReturnValue(false); document.dispatchEvent(new Event('visibilitychange')); expect(frames.size).toBe(0);
+      handle.resume(); expect(frames.size).toBe(1); flush(10000); expect(handle.getAnimationSnapshot().timeMs).toBe(0);
+    } finally { handle.dispose(); }
+    document.dispatchEvent(new Event('visibilitychange')); expect(frames.size).toBe(0);
+  });
+  it('encerra o loop e libera recursos após erro em um frame posterior', () => {
+    const onError = vi.fn(); const handle = mountScene(host, { onReady: vi.fn(), onError, createRenderer: () => renderer });
+    flush(); renderer.render.mockImplementation(() => { throw new Error('GPU'); }); flush(5000);
+    expect(onError).toHaveBeenCalledOnce(); expect(renderer.dispose).toHaveBeenCalledOnce(); expect(frames.size).toBe(0);
+    handle.resume(); expect(frames.size).toBe(0); handle.dispose();
   });
 });

@@ -5,7 +5,7 @@ import type { CharacterPresentation } from '../contracts/characters';
 import type { OfficeLayout } from '../contracts/office';
 import { disposeOffice } from './createOffice';
 
-/** Cinco modelos estáticos. Não possui relógio, animação, mensagens ou decisões. */
+/** Geometria dos cinco modelos; articulações simples, sem relógio ou decisões. */
 export function createCharacters(characters: readonly CharacterPresentation[], layout: OfficeLayout): Group {
   assertCharacters(characters, layout);
   const root = new Group(); root.name = 'characters';
@@ -67,6 +67,19 @@ export function createCharacters(characters: readonly CharacterPresentation[], l
       } else {
         const tie = box(detail, 'tie', '#173446', [0.07, 0.31, 0.015], [0, 1.06, -0.13]); tie.rotation.z = 0.08;
       }
+      // Reparenting com compensação preserva a geometria e a pose-base publicada.
+      function joint(name: string, at: [number, number, number], parts: string[]) {
+        const pivot = new Group(); pivot.name = name; pivot.position.set(...at);
+        for (const child of [...group.children]) if (parts.includes(child.name)) {
+          child.position.sub(pivot.position); pivot.add(child);
+        }
+        group.add(pivot);
+      }
+      for (const [side, x] of [['left', -0.105], ['right', 0.105]] as const)
+        joint(`${side}-leg-pivot`, [x, 0.68, 0], [`${side}-leg`, `${side}-shoe`]);
+      for (const [side, x] of [['left', -0.25], ['right', 0.25]] as const)
+        joint(`${side}-arm-pivot`, [x, 1.25, 0], [`${side}-arm`, `${side}-hand`]);
+      joint('upper-body', [0, 1, 0], ['torso', 'collar', 'shirt-placket', 'neck', 'head', 'hair', 'eye', 'nose', 'accessory', 'left-arm-pivot', 'right-arm-pivot']);
     }
     return root;
   } catch (error) {
